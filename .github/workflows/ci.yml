@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The git hooks are for local commits; CI runs the same checks directly.
+  HUSKY: 0
+
+jobs:
+  node:
+    name: Renderer and Electron
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run format:check
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+  python:
+    name: Kernel bridge
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the interpreter python/poetry.lock was resolved against.
+          python-version: '3.14'
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Cache the virtualenv
+        uses: actions/cache@v4
+        with:
+          path: python/.venv
+          key: venv-${{ runner.os }}-py3.14-${{ hashFiles('python/poetry.lock') }}
+
+      - run: poetry install
+
+      # Starts a real kernel, defines a function, runs it and checks the result.
+      - name: Smoke test the bridge
+        run: poetry run python smoke_test.py
