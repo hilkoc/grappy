@@ -1,0 +1,21 @@
+[project]
+name = "grappy-bridge"
+version = "0.1.0"
+description = "WebSocket bridge between the Grappy renderer and a real IPython kernel"
+authors = [{ name = "hilkoc", email = "hilko.c@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+dependencies = [
+    "ipykernel (>=6.29)",
+    "jupyter-client (>=8.6)",
+    "fastapi (>=0.115)",
+    "uvicorn[standard] (>=0.30)",
+    "pandas (>=2.2)",
+]
+
+[tool.poetry]
+packages = [{ include = "grappy_bridge" }]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

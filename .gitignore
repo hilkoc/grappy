@@ -3,3 +3,5 @@ dist
 out
 .DS_Store
 npm-debug.log*
+python/.venv
+python/**/__pycache__
