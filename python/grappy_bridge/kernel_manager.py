@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,6 +20,12 @@ BOOTSTRAP_PATH = Path(__file__).with_name("bootstrap.py")
 
 STARTUP_TIMEOUT = 60.0
 EXECUTE_TIMEOUT = 300.0
+
+#: IPython colours its tracebacks. The console panel shows plain text, so the codes go.
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+#: Called with (stream, text) for everything the kernel writes that is not a bridge payload.
+OutputCallback = Callable[[str, str], Awaitable[None]]
 
 
 class KernelError(RuntimeError):
@@ -40,24 +48,23 @@ def _format_error(content: dict) -> str:
     return f"{name}: {value}".strip().rstrip(":")
 
 
-def _split_payload(stdout: str) -> tuple[dict | None, list[str]]:
-    """Separate the bridge's own JSON payload from anything the user's code printed."""
-    payload = None
-    user_output = []
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            try:
-                candidate = json.loads(stripped)
-            except json.JSONDecodeError:
-                candidate = None
-            if isinstance(candidate, dict) and candidate.get(PAYLOAD_MARKER):
-                candidate.pop(PAYLOAD_MARKER, None)
-                payload = candidate
-                continue
-        if line:
-            user_output.append(line)
-    return payload, user_output
+def _strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE.sub("", text)
+
+
+def _as_payload(line: str) -> dict | None:
+    """Return the bridge payload this stdout line carries, or None if it is user output."""
+    stripped = line.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return None
+    try:
+        candidate = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(candidate, dict) or not candidate.get(PAYLOAD_MARKER):
+        return None
+    candidate.pop(PAYLOAD_MARKER, None)
+    return candidate
 
 
 class KernelSession:
@@ -91,10 +98,24 @@ class KernelSession:
             await self._manager.shutdown_kernel(now=True)
             self._manager = None
 
-    async def execute(self, code: str, timeout: float = EXECUTE_TIMEOUT) -> ExecutionResult:
-        """Run ``code`` and collect its IOPub output until the kernel goes idle again."""
+    async def execute(
+        self,
+        code: str,
+        timeout: float = EXECUTE_TIMEOUT,
+        on_output: OutputCallback | None = None,
+    ) -> ExecutionResult:
+        """Run ``code`` and collect its IOPub output until the kernel goes idle again.
+
+        Anything the code writes that is not a bridge payload is handed to ``on_output``
+        as it arrives, line by line, so the console panel fills in during a long run
+        rather than only at the end.
+        """
         if self._client is None:
             raise KernelError("Kernel is not running.")
+
+        async def emit(stream: str, text: str) -> None:
+            if on_output is not None:
+                await on_output(stream, _strip_ansi(text))
 
         async with self._lock:
             client = self._client
@@ -102,6 +123,9 @@ class KernelSession:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             chunks: list[str] = []
+            pending = ""
+            payload: dict | None = None
+            user_output: list[str] = []
             error: str | None = None
 
             while True:
@@ -118,24 +142,49 @@ class KernelSession:
 
                 msg_type = message["header"]["msg_type"]
                 content = message.get("content", {})
-                if msg_type == "stream" and content.get("name") == "stdout":
-                    chunks.append(content.get("text", ""))
+                if msg_type == "stream":
+                    text = content.get("text", "")
+                    if content.get("name") != "stdout":
+                        await emit("stderr", text)
+                        continue
+                    chunks.append(text)
+                    pending += text
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        found = _as_payload(line)
+                        if found is not None:
+                            payload = found
+                        elif line:
+                            user_output.append(line)
+                            await emit("stdout", line + "\n")
                 elif msg_type == "error":
                     error = _format_error(content)
+                    traceback = "\n".join(content.get("traceback") or [])
+                    if traceback:
+                        await emit("stderr", traceback + "\n")
                 elif msg_type == "status" and content.get("execution_state") == "idle":
                     break
 
-        stdout = "".join(chunks)
-        payload, user_output = _split_payload(stdout)
-        return ExecutionResult(stdout=stdout, error=error, payload=payload, user_output=user_output)
+            # Output that never ended in a newline still belongs to somebody.
+            if pending:
+                found = _as_payload(pending)
+                if found is not None:
+                    payload = found
+                else:
+                    user_output.append(pending)
+                    await emit("stdout", pending)
 
-    async def execute_payload(self, code: str) -> dict:
+        return ExecutionResult(
+            stdout="".join(chunks), error=error, payload=payload, user_output=user_output
+        )
+
+    async def execute_payload(self, code: str, on_output: OutputCallback | None = None) -> dict:
         """Run ``code`` (which must print one bridge payload) and return that payload.
 
         A Python exception, or a payload that carries its own ``error``, both come back as
         ``{"error": ...}`` so that callers have a single failure shape to handle.
         """
-        result = await self.execute(code)
+        result = await self.execute(code, on_output=on_output)
         if result.error:
             return {"error": result.error}
         if result.payload is None:

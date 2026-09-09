@@ -13,6 +13,9 @@ const STDERR_HISTORY = 20;
 let mainWindow = null;
 let bridgeChild = null;
 
+/** Where the open graph came from, so that Save does not have to ask again. */
+let graphPath = null;
+
 /** What the renderer needs to reach the bridge, mirrored to it on every change. */
 let bridgeInfo = { status: 'starting', port: null, error: null, pythonPath: null };
 
@@ -163,11 +166,71 @@ async function selectInterpreter() {
   return pythonPath;
 }
 
+function sendMenuCommand(command) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('grappy:menu', command);
+  }
+}
+
+/** Write the graph, asking for a location when there isn't one yet. Returns the path. */
+async function saveGraph(contents, saveAs) {
+  let target = graphPath;
+  if (saveAs || !target) {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Graph',
+      defaultPath: target ?? path.join(app.getPath('documents'), 'graph.grappy.json'),
+      filters: [{ name: 'Grappy graph', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return null;
+    }
+    target = result.filePath;
+  }
+
+  try {
+    fs.writeFileSync(target, contents, 'utf8');
+  } catch (error) {
+    dialog.showErrorBox('Could not save the graph', error.message);
+    return null;
+  }
+  graphPath = target;
+  return target;
+}
+
+async function openGraph() {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open Graph',
+    properties: ['openFile'],
+    filters: [{ name: 'Grappy graph', extensions: ['json'] }],
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  const target = result.filePaths[0];
+  try {
+    const contents = fs.readFileSync(target, 'utf8');
+    graphPath = target;
+    return { path: target, contents };
+  } catch (error) {
+    dialog.showErrorBox('Could not open the graph', error.message);
+    return null;
+  }
+}
+
 function buildMenu() {
   const template = [
     {
       label: 'File',
       submenu: [
+        { label: 'Open Graph…', accelerator: 'CmdOrCtrl+O', click: () => sendMenuCommand('open') },
+        { label: 'Save Graph', accelerator: 'CmdOrCtrl+S', click: () => sendMenuCommand('save') },
+        {
+          label: 'Save Graph As…',
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => sendMenuCommand('save-as'),
+        },
+        { type: 'separator' },
         { label: 'Select Python Interpreter…', click: () => selectInterpreter() },
         {
           label: 'Use Bundled Interpreter',
@@ -185,7 +248,26 @@ function buildMenu() {
       ],
     },
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Console',
+          accelerator: 'CmdOrCtrl+`',
+          click: () => sendMenuCommand('toggle-console'),
+        },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
     { role: 'windowMenu' },
   ];
 
@@ -230,6 +312,8 @@ app.whenReady().then(() => {
     startBridge();
     return bridgeInfo;
   });
+  ipcMain.handle('grappy:save-graph', (_event, contents, saveAs) => saveGraph(contents, saveAs));
+  ipcMain.handle('grappy:open-graph', () => openGraph());
 
   buildMenu();
   createWindow();

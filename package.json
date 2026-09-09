@@ -1,6 +1,6 @@
 {
   "name": "grappy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Graphical Python: wire up values and Python functions, run them on an IPython kernel",
   "type": "module",
   "main": "out/main/index.cjs",
@@ -11,6 +11,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "check:persistence": "node scripts/check-persistence.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^26.5.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^5.2.0",

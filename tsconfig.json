@@ -14,7 +14,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    // The scripts run straight through Node's type stripping, which needs real extensions.
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client", "node"]
   },
-  "include": ["src/renderer/src"]
+  "include": ["src/renderer/src", "scripts"]
 }

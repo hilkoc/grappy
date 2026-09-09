@@ -33,6 +33,9 @@ jobs:
 
       - run: npm run typecheck
 
+      # Save and load are driven by native dialogs; this checks the format itself.
+      - run: npm run check:persistence
+
       - run: npm run build
 
   python:

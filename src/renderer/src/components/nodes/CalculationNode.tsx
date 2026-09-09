@@ -4,8 +4,10 @@ import { useGraphActions } from '../../context';
 import type { CalculationNode } from '../../types';
 
 export function CalculationNodeView({ id, data, selected }: NodeProps<CalculationNode>) {
-  const { onEditCode } = useGraphActions();
-  const error = data.defineError ?? data.runError;
+  const { onEditFunction, functionsById } = useGraphActions();
+  const func = functionsById.get(data.functionId);
+  const error = func?.error ?? data.runError;
+  const params = func?.params ?? [];
 
   return (
     <div
@@ -19,11 +21,15 @@ export function CalculationNodeView({ id, data, selected }: NodeProps<Calculatio
       </header>
 
       <div className="node-body">
-        {data.params.length === 0 ? (
-          <p className="node-repr">{data.defined ? 'no parameters' : 'no code applied yet'}</p>
+        <p className="node-function" title={func?.kind === 'import' ? func.path : undefined}>
+          {func ? (func.kind === 'import' ? func.path : func.name) : 'no function'}
+        </p>
+
+        {params.length === 0 ? (
+          <p className="node-repr">{func?.defined ? 'no parameters' : 'not applied yet'}</p>
         ) : (
           <ul className="param-list">
-            {data.params.map((param) => (
+            {params.map((param) => (
               <li className="param-row" key={param.name}>
                 <Handle
                   type="target"
@@ -46,10 +52,10 @@ export function CalculationNodeView({ id, data, selected }: NodeProps<Calculatio
           className="node-button nodrag"
           onClick={(event) => {
             event.stopPropagation();
-            onEditCode(id);
+            onEditFunction(id);
           }}
         >
-          edit code
+          edit function
         </button>
 
         <p className="node-var">{data.varName}</p>

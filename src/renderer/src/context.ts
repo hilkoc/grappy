@@ -1,11 +1,14 @@
 import { createContext, useContext } from 'react';
 
-/** Callbacks the custom nodes need. Passed by context rather than through node data. */
+import type { FunctionDef } from './types';
+
+/** Callbacks and lookups the custom nodes need, passed by context rather than node data. */
 export interface GraphActions {
   kernelReady: boolean;
+  functionsById: Map<string, FunctionDef>;
   onInputChange: (nodeId: string, value: string) => void;
   onInputCommit: (nodeId: string) => void;
-  onEditCode: (nodeId: string) => void;
+  onEditFunction: (nodeId: string) => void;
   onViewValue: (varName: string, title: string) => void;
 }
 

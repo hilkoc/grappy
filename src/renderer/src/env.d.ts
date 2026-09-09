@@ -9,7 +9,10 @@ declare global {
       getBridgeInfo: () => Promise<BridgeInfo>;
       selectInterpreter: () => Promise<string | null>;
       restartBridge: () => Promise<BridgeInfo>;
+      saveGraph: (contents: string, saveAs: boolean) => Promise<string | null>;
+      openGraph: () => Promise<{ path: string; contents: string } | null>;
       onBridgeChanged: (callback: (info: BridgeInfo) => void) => () => void;
+      onMenuCommand: (callback: (command: string) => void) => () => void;
     };
   }
 }

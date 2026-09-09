@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from .kernel_manager import KernelSession
+from .kernel_manager import KernelSession, OutputCallback
 
 logger = logging.getLogger("grappy.bridge")
 
@@ -88,23 +88,47 @@ def coerce_input_value(value: object, value_kind: str) -> int | float | str:
     return int(number) if number.is_integer() else number
 
 
-async def handle_define_calculation(state: BridgeState, message: dict) -> dict:
-    node_id = message.get("node_id")
-    code = message.get("code") or ""
+def console_sink(websocket: WebSocket, node_id: object = None) -> OutputCallback:
+    """Forward whatever the kernel writes to the renderer's console panel."""
+
+    async def send(stream: str, text: str) -> None:
+        await websocket.send_json(
+            {"type": "console", "stream": stream, "text": text, "node_id": node_id}
+        )
+
+    return send
+
+
+async def handle_define_function(
+    state: BridgeState, message: dict, console: OutputCallback
+) -> dict:
+    """Define one function, either from source or by importing a fully qualified name.
+
+    A function is defined once and can back any number of calculation nodes, so this is
+    keyed by function rather than by node.
+    """
     function_var_name = require_identifier(message.get("function_var_name"), "function_var_name")
-    result = await state.session.execute_payload(
-        f"print(_grappy_define({code!r}, {function_var_name!r}))"
-    )
+    kind = message.get("kind", "source")
+    if kind == "source":
+        source = message.get("code") or ""
+        code = f"print(_grappy_define({source!r}, {function_var_name!r}))"
+    elif kind == "import":
+        path = str(message.get("path") or "")
+        code = f"print(_grappy_import({path!r}, {function_var_name!r}))"
+    else:
+        raise ProtocolError(f"Unknown function kind: {kind!r}")
+
+    result = await state.session.execute_payload(code, console)
     return {
-        "type": "calculation_defined",
-        "node_id": node_id,
+        "type": "function_defined",
+        "function_id": message.get("function_id"),
         "function_var_name": function_var_name,
         "params": result.get("params", []),
         "error": result.get("error"),
     }
 
 
-async def handle_set_input(state: BridgeState, message: dict) -> dict:
+async def handle_set_input(state: BridgeState, message: dict, console: OutputCallback) -> dict:
     node_id = message.get("node_id")
     var_name = require_identifier(message.get("var_name"), "var_name")
     try:
@@ -113,7 +137,7 @@ async def handle_set_input(state: BridgeState, message: dict) -> dict:
         return {"type": "value_set", "node_id": node_id, "error": str(exc)}
 
     result = await state.session.execute_payload(
-        f"print(_grappy_set({var_name!r}, {value!r}))"
+        f"print(_grappy_set({var_name!r}, {value!r}))", console
     )
     return {
         "type": "value_set",
@@ -125,9 +149,13 @@ async def handle_set_input(state: BridgeState, message: dict) -> dict:
     }
 
 
-async def handle_describe_value(state: BridgeState, message: dict) -> dict:
+async def handle_describe_value(
+    state: BridgeState, message: dict, console: OutputCallback
+) -> dict:
     var_name = require_identifier(message.get("var_name"), "var_name")
-    result = await state.session.execute_payload(f"print(_grappy_describe_name({var_name!r}))")
+    result = await state.session.execute_payload(
+        f"print(_grappy_describe_name({var_name!r}))", console
+    )
     return {
         "type": "value_description",
         "var_name": var_name,
@@ -169,7 +197,8 @@ async def handle_run(state: BridgeState, websocket: WebSocket, message: dict) ->
             continue
 
         result = await state.session.execute_payload(
-            f"print(_grappy_call({function_var_name!r}, {output_var_name!r}, {args!r}))"
+            f"print(_grappy_call({function_var_name!r}, {output_var_name!r}, {args!r}))",
+            console_sink(websocket, node_id),
         )
         if result.get("error"):
             failed_vars.add(output_var_name)
@@ -232,16 +261,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 async def dispatch(state: BridgeState, websocket: WebSocket, message: dict) -> None:
     message_type = message.get("type")
+    console = console_sink(websocket, message.get("node_id"))
     try:
         if message_type == "run":
             await handle_run(state, websocket, message)
             return
-        if message_type == "define_calculation":
-            response = await handle_define_calculation(state, message)
+        if message_type == "define_function":
+            response = await handle_define_function(state, message, console)
         elif message_type == "set_input":
-            response = await handle_set_input(state, message)
+            response = await handle_set_input(state, message, console)
         elif message_type == "describe_value":
-            response = await handle_describe_value(state, message)
+            response = await handle_describe_value(state, message, console)
         else:
             response = {"type": "error", "error": f"Unknown message type: {message_type!r}"}
     except ProtocolError as exc:

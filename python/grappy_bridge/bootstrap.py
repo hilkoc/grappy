@@ -11,6 +11,7 @@ JSON string that the caller prints. Each payload carries a ``_grappy`` marker ke
 that lets the bridge tell its own output apart from the user's ``print`` calls.
 """
 
+import importlib as _grappy_importlib
 import inspect as _grappy_inspect
 import json as _grappy_json
 import keyword as _grappy_keyword
@@ -104,6 +105,36 @@ def _grappy_annotation_text(annotation):
     return _grappy_inspect.formatannotation(annotation)
 
 
+def _grappy_bind(function, target_name):
+    """Bind a callable to ``target_name`` and report the parameters it accepts.
+
+    A callable whose signature cannot be read is rejected rather than bound, because the
+    editor has no way to give it input ports.
+    """
+    try:
+        signature = _grappy_inspect.signature(function)
+    except (TypeError, ValueError) as exc:
+        return _grappy_payload(error="Cannot read the signature: {}".format(exc))
+
+    params = []
+    for parameter in signature.parameters.values():
+        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
+            continue
+        params.append(
+            {
+                "name": parameter.name,
+                "annotation": _grappy_annotation_text(parameter.annotation),
+                "has_default": parameter.default is not parameter.empty,
+                "positional_only": parameter.kind is parameter.POSITIONAL_ONLY,
+            }
+        )
+
+    globals()[target_name] = function
+    return _grappy_payload(
+        function_name=getattr(function, "__name__", target_name), params=params
+    )
+
+
 def _grappy_define(source, target_name):
     """Execute a function definition and bind the resulting function to ``target_name``.
 
@@ -121,27 +152,39 @@ def _grappy_define(source, target_name):
     if not functions:
         return _grappy_payload(error="No function definition found in the calculation code.")
 
-    function = functions[-1]
     globals().update(namespace)
-    globals()[target_name] = function
+    return _grappy_bind(functions[-1], target_name)
 
-    try:
-        signature = _grappy_inspect.signature(function)
-    except (TypeError, ValueError) as exc:
-        return _grappy_payload(error="Cannot inspect signature: {}".format(exc))
 
-    params = []
-    for parameter in signature.parameters.values():
-        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
-            continue
-        params.append(
-            {
-                "name": parameter.name,
-                "annotation": _grappy_annotation_text(parameter.annotation),
-                "has_default": parameter.default is not parameter.empty,
-            }
+def _grappy_import(path, target_name):
+    """Import a dotted name such as ``collections.Counter`` and bind it to ``target_name``.
+
+    Where the module ends and the attribute begins is not known up front, so the longest
+    importable prefix wins: ``os.path.join`` imports ``os.path`` and takes ``join`` from it.
+    """
+    parts = [part for part in str(path).strip().split(".") if part]
+    if len(parts) < 2:
+        return _grappy_payload(
+            error='Use a fully qualified name, such as "collections.Counter".'
         )
-    return _grappy_payload(function_name=function.__name__, params=params)
+
+    last_error = None
+    for split in range(len(parts) - 1, 0, -1):
+        try:
+            target = _grappy_importlib.import_module(".".join(parts[:split]))
+        except Exception as exc:
+            last_error = "{}: {}".format(type(exc).__name__, exc)
+            continue
+        try:
+            for attribute in parts[split:]:
+                target = getattr(target, attribute)
+        except AttributeError as exc:
+            return _grappy_payload(error="{}: {}".format(type(exc).__name__, exc))
+        if not callable(target):
+            return _grappy_payload(error="{} is not callable.".format(path))
+        return _grappy_bind(target, target_name)
+
+    return _grappy_payload(error="Cannot import {}. {}".format(path, last_error))
 
 
 def _grappy_is_identifier(name):
@@ -160,13 +203,42 @@ def _grappy_call(function_name, output_name, args):
     ``args`` maps each parameter name to the name of the variable that feeds it. Names
     that do not exist yet are reported instead of raising, so an unset input reads as a
     clear message rather than a ``KeyError``.
+
+    Arguments are passed by keyword, except for positional-only parameters, which many
+    builtins and C types have. Those are passed in signature order, and a gap in that
+    order is reported rather than silently shifting later arguments into place.
     """
     missing = sorted({name for name in [function_name, *args.values()] if name not in globals()})
     if missing:
         return _grappy_payload(error="Not available in the kernel: " + ", ".join(missing))
-    globals()[output_name] = globals()[function_name](
-        **{param: globals()[source] for param, source in args.items()}
-    )
+
+    function = globals()[function_name]
+    try:
+        signature = _grappy_inspect.signature(function)
+    except (TypeError, ValueError) as exc:
+        return _grappy_payload(error="Cannot read the signature: {}".format(exc))
+
+    positional = []
+    keywords = {}
+    unfilled = None
+    for parameter in signature.parameters.values():
+        if parameter.name not in args:
+            if parameter.kind is parameter.POSITIONAL_ONLY:
+                unfilled = parameter.name
+            continue
+        value = globals()[args[parameter.name]]
+        if parameter.kind is not parameter.POSITIONAL_ONLY:
+            keywords[parameter.name] = value
+        elif unfilled is not None:
+            return _grappy_payload(
+                error='Connect "{}" too: it comes before "{}" and cannot be skipped.'.format(
+                    unfilled, parameter.name
+                )
+            )
+        else:
+            positional.append(value)
+
+    globals()[output_name] = function(*positional, **keywords)
     return _grappy_describe(globals()[output_name])
 
 

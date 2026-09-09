@@ -4,10 +4,14 @@
 on a node canvas and run the result against a real IPython kernel.
 
 - The canvas is React + React Flow, built with `electron-vite`.
-- A calculation node holds one Python function; its source is edited in CodeMirror and its
-  input ports come from the function's own signature.
+- A calculation node calls a function: either Python you write in CodeMirror, or a fully
+  qualified name you import, such as `collections.Counter`. Its input ports come from the
+  function's own signature, as the kernel reports it.
+- One function can back several calculation nodes. Edit it once and every node using it
+  follows.
 - A local Python process (the **bridge**) owns the kernel and talks to the renderer over a
   WebSocket. The Electron main process starts it and tells the renderer which port to use.
+- Graphs are saved as JSON, laid out for small diffs in version control.
 
 ## Development
 
@@ -64,13 +68,14 @@ variable first:
 env -u ELECTRON_RUN_AS_NODE npm start
 ```
 
-Build, lint, format and typecheck:
+Build, lint, format, typecheck, and check the saved-file format:
 
 ```sh
 npm run build
 npm run lint
 npm run format
 npm run typecheck
+npm run check:persistence
 ```
 
 ### Choosing a different interpreter
@@ -87,25 +92,91 @@ Restart Kernel Bridge** restarts it with a fresh kernel.
    asks for a name, which becomes its Python variable name (`First Name` → `First_Name`).
 2. Type a value into an input node. It is sent to the kernel when the field loses focus or
    you press Enter, and the node then shows the real Python type it became.
-3. Click a calculation node to open its editor on the right, write a single `def`, and press
-   **Apply**. The node grows one input port per parameter, and a result node appears beside
-   it.
-4. Drag from an input node's right-hand dot onto a parameter to connect it. Each parameter
+3. A calculation node asks which function it calls. Pick one that already exists, or let it
+   make a new one named after the node — either Python you write, or a name to import.
+4. Click a calculation node to open its function on the right. Write a single `def`, or
+   switch to **Import name** and enter something like `collections.Counter`, then press
+   **Apply**. The node grows one input port per parameter and a result node appears beside
+   it. If several nodes share the function, they all update together.
+5. Drag from an input node's right-hand dot onto a parameter to connect it. Each parameter
    takes one connection; a new one replaces the old.
-5. Press **Run** once the kernel status reads `ready`. Results appear on the result nodes as
+6. Press **Run** once the kernel status reads `ready`. Results appear on the result nodes as
    each step finishes. A value too large to show inline gets a **view** button that opens it
    in the left panel — a `DataFrame` is rendered as a table.
 
 An exception in one calculation marks that node and everything downstream of it; independent
 branches keep running.
 
+### The console
+
+**View → Console** opens a panel along the bottom showing everything the kernel writes:
+your own `print` output, anything on stderr, and the full traceback behind the one-line
+error a node shows. Close it from the same menu item or the × in its header.
+
+### Saving and loading
+
+**File → Save Graph** and **File → Open Graph…** write and read a JSON file. It holds the
+nodes, the edges, the functions and the values you typed — not the results, which the
+kernel recomputes. The layout is chosen so that version control sees small diffs: keys in a
+fixed order, arrays sorted by id, positions rounded to whole pixels, and Python source kept
+as one array element per line rather than one long string of `\n`.
+
+```json
+{
+  "version": 1,
+  "functions": [
+    {
+      "id": "fn-1",
+      "kind": "source",
+      "name": "Greeting",
+      "varName": "Greeting__fn",
+      "params": [
+        {
+          "name": "first_name",
+          "annotation": "str",
+          "has_default": false,
+          "positional_only": false
+        }
+      ],
+      "code": ["def say_greeting(first_name: str):", "    return f\"Hi {first_name}\""]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node-1",
+      "type": "inputValue",
+      "name": "First Name",
+      "varName": "First_Name",
+      "position": { "x": 40, "y": 60 },
+      "valueKind": "string",
+      "value": "Ada"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "node-1",
+      "sourceHandle": null,
+      "target": "node-3",
+      "targetHandle": "first_name"
+    }
+  ]
+}
+```
+
+Opening a file replays every function and every input value into the kernel, so a graph
+picks up where it left off. The same replay happens whenever the kernel restarts. The window
+title shows the file name, with a leading dot while there are unsaved changes.
+
 ## Layout
 
 ```
 src/
-  main/        Electron main process: window, File menu, bridge lifecycle
+  main/        Electron main process: window, menus, files, bridge lifecycle
   preload/     sandboxed contextBridge, the renderer's only IPC surface
   renderer/    React + TypeScript canvas
+scripts/
+  check-persistence.ts   round-trip check for the saved file format
 python/
   grappy_bridge/
     server.py          FastAPI app and the WebSocket protocol

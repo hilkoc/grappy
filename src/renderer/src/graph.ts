@@ -1,6 +1,6 @@
 import type { Edge } from '@xyflow/react';
 
-import type { CalculationNode, GrappyNode, RunStep } from './types';
+import type { CalculationNode, FunctionDef, GrappyNode, RunStep } from './types';
 
 export interface RunPlan {
   /** Steps in topological order, ready to send to the bridge. */
@@ -31,11 +31,16 @@ function producerOf(node: GrappyNode): string | null {
  * Work out what to run, in what order, from the current graph.
  *
  * Everything here is client-side: the bridge receives a flat, already-ordered list of
- * steps. Nodes that cannot run — no code applied, an unconnected required parameter, a
- * cycle — are reported through `errors` along with everything downstream of them.
+ * steps. Nodes that cannot run — no function applied, an unconnected required parameter,
+ * a cycle — are reported through `errors` along with everything downstream of them.
  */
-export function buildRunPlan(nodes: GrappyNode[], edges: Edge[]): RunPlan {
+export function buildRunPlan(
+  nodes: GrappyNode[],
+  edges: Edge[],
+  functions: FunctionDef[],
+): RunPlan {
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const functionsById = new Map(functions.map((func) => [func.id, func]));
   const calculations = nodes.filter(isCalculation);
 
   const errors: Record<string, string> = {};
@@ -45,8 +50,9 @@ export function buildRunPlan(nodes: GrappyNode[], edges: Edge[]): RunPlan {
   for (const node of calculations) {
     const args: Record<string, string> = {};
     const dependencies = new Set<string>();
+    const func = functionsById.get(node.data.functionId);
 
-    for (const param of node.data.params) {
+    for (const param of func?.params ?? []) {
       const edge = edges.find(
         (item) => item.target === node.id && item.targetHandle === param.name,
       );
@@ -64,10 +70,12 @@ export function buildRunPlan(nodes: GrappyNode[], edges: Edge[]): RunPlan {
       }
     }
 
-    if (node.data.defineError) {
-      errors[node.id] = node.data.defineError;
-    } else if (!node.data.defined) {
-      errors[node.id] ??= 'Open this node and apply its code first.';
+    if (!func) {
+      errors[node.id] = 'This node has no function.';
+    } else if (func.error) {
+      errors[node.id] = func.error;
+    } else if (!func.defined) {
+      errors[node.id] ??= `Apply the function "${func.name}" first.`;
     }
 
     argsById.set(node.id, args);
@@ -130,7 +138,7 @@ export function buildRunPlan(nodes: GrappyNode[], edges: Edge[]): RunPlan {
 
     steps.push({
       node_id: id,
-      function_var_name: node.data.functionVarName,
+      function_var_name: functionsById.get(node.data.functionId)?.varName ?? '',
       args: argsById.get(id) ?? {},
       output_var_name: node.data.varName,
     });

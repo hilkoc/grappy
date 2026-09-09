@@ -2,52 +2,102 @@ import { python } from '@codemirror/lang-python';
 import CodeMirror from '@uiw/react-codemirror';
 import { useState } from 'react';
 
-import type { CalculationNode } from '../types';
+import type { FunctionDef, FunctionKind } from '../types';
+
+export interface FunctionEdit {
+  kind: FunctionKind;
+  code: string;
+  path: string;
+}
 
 interface CodePanelProps {
-  node: CalculationNode;
+  func: FunctionDef;
+  /** How many calculation nodes call this function. */
+  usedBy: number;
   disabled: boolean;
-  onApply: (nodeId: string, code: string) => void;
+  onApply: (functionId: string, edit: FunctionEdit) => void;
   onClose: () => void;
 }
 
 /**
- * Right-side editor for one calculation node's Python source. Applying it sends
- * `define_calculation`, which is what (re)builds the node's input ports.
+ * Right-side editor for one function: either Python source, or the fully qualified name of
+ * something importable. Applying it sends `define_function`, which is what (re)builds the
+ * input ports on every calculation node that calls this function.
  */
-export function CodePanel({ node, disabled, onApply, onClose }: CodePanelProps) {
-  const [code, setCode] = useState(node.data.code);
+export function CodePanel({ func, usedBy, disabled, onApply, onClose }: CodePanelProps) {
+  const [kind, setKind] = useState<FunctionKind>(func.kind);
+  const [code, setCode] = useState(func.code);
+  const [path, setPath] = useState(func.path);
+
+  const apply = () => onApply(func.id, { kind, code, path: path.trim() });
 
   return (
     <aside className="side-panel right">
       <header className="panel-header">
-        <h2>{node.data.name}</h2>
+        <h2>{func.name}</h2>
         <button type="button" className="panel-close" onClick={onClose} aria-label="Close">
           ×
         </button>
       </header>
 
-      <div className="panel-editor">
-        <CodeMirror
-          value={code}
-          height="100%"
-          theme="dark"
-          extensions={[python()]}
-          onChange={setCode}
-          basicSetup={{ tabSize: 4 }}
-        />
-      </div>
-
-      {node.data.defineError ? <p className="panel-error">{node.data.defineError}</p> : null}
-
-      <div className="panel-buttons">
-        <p className="panel-hint">Defines {node.data.functionVarName}</p>
+      <div className="panel-tabs">
         <button
           type="button"
-          className="primary"
-          disabled={disabled}
-          onClick={() => onApply(node.id, code)}
+          className={kind === 'source' ? 'is-active' : ''}
+          onClick={() => setKind('source')}
         >
+          Python source
+        </button>
+        <button
+          type="button"
+          className={kind === 'import' ? 'is-active' : ''}
+          onClick={() => setKind('import')}
+        >
+          Import name
+        </button>
+      </div>
+
+      {kind === 'source' ? (
+        <div className="panel-editor">
+          <CodeMirror
+            value={code}
+            height="100%"
+            theme="dark"
+            extensions={[python()]}
+            onChange={setCode}
+            basicSetup={{ tabSize: 4 }}
+          />
+        </div>
+      ) : (
+        <div className="panel-content">
+          <label htmlFor="import-path">Fully qualified name</label>
+          <input
+            id="import-path"
+            className="panel-input"
+            value={path}
+            placeholder="collections.Counter"
+            onChange={(event) => setPath(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !disabled) {
+                apply();
+              }
+            }}
+          />
+          <p className="panel-hint">
+            Anything importable and callable: collections.Counter, pandas.DataFrame,
+            statistics.mean. Its parameters become this node&apos;s input ports.
+          </p>
+        </div>
+      )}
+
+      {func.error ? <p className="panel-error">{func.error}</p> : null}
+
+      <div className="panel-buttons">
+        <p className="panel-hint">
+          {func.varName}
+          {usedBy > 1 ? ` · used by ${usedBy} nodes` : ''}
+        </p>
+        <button type="button" className="primary" disabled={disabled} onClick={apply}>
           Apply
         </button>
       </div>

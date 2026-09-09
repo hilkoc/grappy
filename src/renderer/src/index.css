@@ -70,9 +70,19 @@ input {
   color: var(--text);
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-input);
+  color: var(--text);
 }
 
 /* ---------------------------------------------------------------- layout */
@@ -193,6 +203,23 @@ input:focus {
   line-height: 1.4;
 }
 
+.panel-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-tabs button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.panel-input {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .panel-editor {
   flex: 1;
   min-height: 0;
@@ -250,6 +277,47 @@ input:focus {
   border: 1px solid var(--border);
   padding: 3px 8px;
   text-align: right;
+}
+
+/* --------------------------------------------------------------- console */
+
+.console-panel {
+  display: flex;
+  flex-direction: column;
+  height: 220px;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.console-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.console-actions button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.console-output {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.console-output pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-line.stderr {
+  color: var(--danger);
 }
 
 /* ---------------------------------------------------------------- nodes */
@@ -319,6 +387,18 @@ input:focus {
 
 .node-repr {
   color: var(--text-dim);
+}
+
+.node-function {
+  margin: 0;
+  padding: 2px 6px;
+  align-self: flex-start;
+  border-radius: 4px;
+  background: rgba(106, 169, 255, 0.1);
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
 }
 
 .node-var {
@@ -413,6 +493,18 @@ input:focus {
 
 .dialog-error {
   color: var(--danger);
+}
+
+.dialog-choice {
+  display: flex;
+  gap: 16px;
+}
+
+.dialog-choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
 }
 
 .dialog-buttons {

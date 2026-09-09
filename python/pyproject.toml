@@ -1,6 +1,6 @@
 [project]
 name = "grappy-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "WebSocket bridge between the Grappy renderer and a real IPython kernel"
 authors = [{ name = "hilkoc", email = "hilko.c@gmail.com" }]
 readme = "README.md"

@@ -16,6 +16,31 @@ export interface Param {
   name: string;
   annotation: string;
   has_default: boolean;
+  /** Passed by position rather than by name. Common on builtins and C types. */
+  positional_only: boolean;
+}
+
+/** Where a function comes from: written in the editor, or imported by name. */
+export type FunctionKind = 'source' | 'import';
+
+/**
+ * One function the graph knows about. Any number of calculation nodes can point at the
+ * same one, so a definition is edited in a single place and every node using it follows.
+ */
+export interface FunctionDef {
+  id: string;
+  name: string;
+  /** The name the function is bound to in the kernel. */
+  varName: string;
+  kind: FunctionKind;
+  /** Source text, for a `source` function. */
+  code: string;
+  /** A fully qualified name such as `collections.Counter`, for an `import` function. */
+  path: string;
+  params: Param[];
+  /** True once the kernel has accepted the function and reported its parameters. */
+  defined: boolean;
+  error?: string;
 }
 
 /** The parts of a node that describe a value the kernel is holding. */
@@ -39,13 +64,8 @@ export type InputNodeData = ValueState & {
 export type CalculationNodeData = {
   name: string;
   varName: string;
-  /** The function itself lives under a separate name so the result can reuse `varName`. */
-  functionVarName: string;
-  code: string;
-  params: Param[];
-  /** True once the kernel has accepted this node's code and reported its parameters. */
-  defined?: boolean;
-  defineError?: string;
+  /** The function this node calls. Several nodes may name the same one. */
+  functionId: string;
   runError?: string;
   running?: boolean;
 };
@@ -62,6 +82,12 @@ export type CalculationNode = Node<CalculationNodeData, 'calculation'>;
 export type OutputNode = Node<OutputNodeData, 'outputValue'>;
 export type GrappyNode = InputNode | CalculationNode | OutputNode;
 
+export interface ConsoleLine {
+  id: number;
+  stream: 'stdout' | 'stderr';
+  text: string;
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket protocol
 // ---------------------------------------------------------------------------
@@ -74,7 +100,14 @@ export interface RunStep {
 }
 
 export type ClientMessage =
-  | { type: 'define_calculation'; node_id: string; code: string; function_var_name: string }
+  | {
+      type: 'define_function';
+      function_id: string;
+      function_var_name: string;
+      kind: FunctionKind;
+      code?: string;
+      path?: string;
+    }
   | {
       type: 'set_input';
       node_id: string;
@@ -94,16 +127,17 @@ export interface ValuePayload {
 
 export type ServerMessage =
   | { type: 'kernel_status'; status: KernelStatus; error: string | null }
-  | ({
-      type: 'calculation_defined';
-      node_id: string;
+  | {
+      type: 'function_defined';
+      function_id: string;
       function_var_name: string;
       params: Param[];
       error?: string | null;
-    } & Record<string, unknown>)
+    }
   | ({ type: 'value_set'; node_id: string } & ValuePayload)
   | ({ type: 'node_result'; node_id: string; output_var_name: string } & ValuePayload)
   | { type: 'run_complete' }
+  | { type: 'console'; stream: 'stdout' | 'stderr'; text: string; node_id: string | null }
   | {
       type: 'value_description';
       var_name: string;
